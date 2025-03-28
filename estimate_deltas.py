@@ -18,7 +18,7 @@ def loss_function(x, zs, ys):
 
 def adam(task_prefix, init_x, zs, ys, delta=1e-2, learning_rate=0.1, \
          beta1=0.95, beta2=0.99, epsilon=1e-6, num_iterations=1000,
-         exponent=0.5):
+         exponent=0.5, D=100):
     
     x = init_x.clone().detach().requires_grad_(True).double()
     m = torch.zeros_like(x)
@@ -37,11 +37,14 @@ def adam(task_prefix, init_x, zs, ys, delta=1e-2, learning_rate=0.1, \
         loss.backward()
         g = x.grad
 
-        if current_iter % 100 == 0:
-            l_clean.append(loss_function(x, zs, ys).item())
-
         m = beta1 * m + (1 - beta1) * g
         v = beta2 * v + (1 - beta2) * (g ** 2)
+
+        # if current_iter <= 100:
+        #     print("current_iter", current_iter)
+        #     print("g:", g)
+        #     print("v:", v)
+
         m_hat, v_hat = m, v  # disable bias correction
         u = m_hat / (torch.pow(v_hat, exponent) + epsilon)
         s = torch.pow(v_hat, -exponent) ## preconditioner
@@ -49,9 +52,15 @@ def adam(task_prefix, init_x, zs, ys, delta=1e-2, learning_rate=0.1, \
         with torch.no_grad():
             x -= learning_rate * u
         x.grad.zero_()
-        x_trajectory.append(x.detach().clone())
-        l_trajectory.append(loss.item())
-        s_trajectory.append(s.detach().clone())
+
+        ## in the first iterates, s will change dramatically, since v moves from 
+        ## 0 to a non-zero value, which will cause s to be very large
+        ## So we record s from iteration D-1 instead of 0
+        if current_iter % D == D - 1:
+            x_trajectory.append(x.detach().clone())
+            l_trajectory.append(loss.item())
+            l_clean.append(loss_function(x, zs, ys).item())
+            s_trajectory.append(s.detach().clone())
 
     return x_trajectory, l_trajectory, l_clean, s_trajectory
 
@@ -68,28 +77,60 @@ def find_convergence_point(losses):
             return i
     return length
 
-def estimate_deltas(task_prefix, n, init_x, w_star, zs, ys, train_N, delta, lra, beta1, beta2, epsilon, e):
-    num_iterations = 1000000 ## originally 10^7
+def estimate_deltas(task_prefix, n, init_x, w_star, zs, ys, train_N, delta, lra, beta1, beta2, epsilon, e, D, proj_matrix):
+    num_iterations = 200000 ## originally 10^7
     zs_test = zs[train_N:]
     ys_test = ys[train_N:]
     zs = zs[:n]
     ys = ys[:n]
     xs, train_losses_noised, train_losses_clean, s_trajectory = adam(task_prefix, init_x, zs, ys, delta=delta, \
                         learning_rate=lra, beta1=beta1, beta2=beta2, epsilon=epsilon, \
-                        num_iterations=num_iterations, exponent=e)
-    print_indexes = range(0, num_iterations, 100)
-    convergence_point = find_convergence_point(train_losses_clean)
+                        num_iterations=num_iterations, exponent=e, D=D)
+    print_indexes = range(0, num_iterations, D)
+    convergence_point = 1000
+    # convergence_point = find_convergence_point(train_losses_clean)
+    deltas = []
+    s_array = np.array(s_trajectory)
+    ref_vector = s_array[convergence_point]
+    clipped = s_array[convergence_point+1:]
+    deltas = np.linalg.norm(clipped - ref_vector, axis=1)
+    np.save(f'results/{task_prefix}/deltas.npy', deltas)
+    np.save(f'results/{task_prefix}/s_array.npy', s_array)
     
-    plt.figure(figsize=(10, 10))
-    # plt.plot(print_indexes, test_losses_clean, label='Test Loss', color='orange')
+    ## two subplots: one for loss, one for delta
+    plt.figure(figsize=(20, 20))
+    plt.subplot(2, 2, 1)
     plt.plot(print_indexes, train_losses_clean, label='Train Loss', color='purple')
-    plt.axvline(x=convergence_point, color='red', linestyle='--', label='Convergence Point')
+    plt.axvline(x=convergence_point * D + D - 1, color='red', linestyle='--', label='Convergence Point')
     plt.xlabel('Iteration')
     plt.ylabel('Loss')
     plt.yscale('log')
     plt.title('Loss Trajectory of Adam with exponent={}'.format(e))
     plt.legend()
-    plt.savefig(f'results/{task_prefix}/loss.png')
+
+    ## second plot: deltas
+    plt.subplot(2, 2, 2)
+    plt.plot(range(convergence_point + 1, len(s_trajectory)), deltas, label='Delta', color='blue')
+    plt.xlabel('Iteration')
+    plt.ylabel('DeltaS')
+    plt.title('DeltaS Trajectory of Adam with exponent={}'.format(e))
+    plt.legend()
+
+    ## third plot: s_trajectory
+    plt.subplot(2, 2, 3)
+    s_projected = s_array @ proj_matrix
+    print("s_projected:")
+    # for i in range(100):
+    #     print(s_projected[i])
+    #     print(s_array[i])
+    plt.plot(s_projected[:, 0], s_projected[:, 1], marker='o', markersize=1, linewidth=1)
+    plt.scatter(s_projected[convergence_point, 0], s_projected[convergence_point, 1], color='red', label='Convergence Point')
+    plt.xlabel('Proj Dim 1')
+    plt.ylabel('Proj Dim 2')
+    plt.title('2D Random Projection of Trajectory')
+    plt.legend()
+
+    plt.savefig(f'results/{task_prefix}/delta.png')
     plt.close()
 
     # save test and train losses to a file using numpy.save
@@ -110,7 +151,9 @@ def main(args):
     d, k, delta = args.d, args.k, args.delta
     z_sample_mode = args.z_sample_mode
     beta1, epsilon, e = args.beta1, args.epsilon, args.e
+    D = args.D
     test_N = int(1e4)
+    proj_matrix = np.random.randn(2 * d, 2)
 
     ## generate data and train; the former train_N samples are for training,
     ## and the latter test_N samples are for testing
@@ -124,7 +167,7 @@ def main(args):
         ## result directory: results/adam/{beta2,lr}/{n}
         task_prefix = "adam/" + f"beta2{beta2}-lra{lra}/" + f"n{train_N}"
         os.makedirs("results/" + task_prefix, exist_ok=True)
-        estimate_deltas(task_prefix, train_N, init_x, w_star, zs, ys, train_N, delta, lra, beta1, beta2, epsilon, e)
+        estimate_deltas(task_prefix, train_N, init_x, w_star, zs, ys, train_N, delta, lra, beta1, beta2, epsilon, e, D, proj_matrix)
 
 
 if __name__ == "__main__":
@@ -140,6 +183,7 @@ if __name__ == "__main__":
     parser.add_argument('--epsilon', type=float, help='Epsilon for Adam', default=1e-6)
     parser.add_argument('--n', type=int, help='Number of training samples', default=50) 
     parser.add_argument('--e', type=int, help='exponent of Adam', default=0.5) 
+    parser.add_argument('--D', type=int, help='Frequency of recording', default=100)
     args = parser.parse_args()
 
     if args.k > args.d:
