@@ -93,6 +93,19 @@ def estimate_deltas(task_prefix, n, init_x, w_star, zs, ys, train_N, delta, lra,
     s_array = np.array(s_trajectory)
     ref_vector = s_array[convergence_point]
     clipped = s_array[convergence_point+1:]
+
+    ## delete this
+    # print("first items of s trajectory:")
+    # for i in range(100):
+    #     print(f"s_trajectory[{i}]", s_trajectory[i])
+
+    # print("first items of clipped s trajectory:")
+    # for i in range(100):
+    #     print(f"clipped[{i}]", clipped[i])
+
+    # raise ValueError("stop here")
+    # return
+    
     deltas = np.linalg.norm(clipped - ref_vector, axis=1)
     np.save(f'results/{task_prefix}/deltas.npy', deltas)
     np.save(f'results/{task_prefix}/s_array.npy', s_array)
@@ -160,12 +173,14 @@ def main(args):
     init_x = torch.cat((init_x, init_x), 0)
     init_x = init_x * 0.1 
 
-    for lra in np.logspace(-3, -1, num=10):
-        beta2 = 1 - 10 * lra ** 2
-        ## result directory: results/adam/{beta2,lr}/{n}
-        task_prefix = "adam/" + f"beta2{beta2}-lra{lra}/" + f"n{train_N}"
-        os.makedirs("results/" + task_prefix, exist_ok=True)
-        estimate_deltas(task_prefix, train_N, init_x, w_star, zs, ys, train_N, delta, lra, beta1, beta2, epsilon, e, D, proj_matrix)
+    for scheme in [1.0, 1.5, 3.0, 0.5, 0.75, 1.25, 1.75, 2.5, 3.5]:
+        C = 0.1 ** (1 - scheme) ## let beta2 = 0.9 when lr = 0.1
+        for lra in np.logspace(-3, -1, num=10):
+            beta2 = 1 - C * lra ** scheme
+            ## result directory: results/adam/scheme{scheme}/beta2{beta2}-lra{lr}/n{n}
+            task_prefix = "adam/" + f"scheme{scheme}/" + f"beta2{beta2}-lra{lra}/" + f"n{train_N}"
+            os.makedirs("results/" + task_prefix, exist_ok=True)
+            estimate_deltas(task_prefix, train_N, init_x, w_star, zs, ys, train_N, delta, lra, beta1, beta2, epsilon, e, D, proj_matrix)
 
 
 if __name__ == "__main__":
