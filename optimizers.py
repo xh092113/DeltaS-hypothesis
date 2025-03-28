@@ -98,7 +98,7 @@ def loss_manual(x, zs, ys):
     hessian = torch.zeros(2 * d, 2 * d, dtype=torch.float64)
     for i in range(n):
         z, y = zs[i], ys[i]
-        l = (z * (u**2-v**2)).sum() - y
+        l = (z * (u**2-v**2)).sum() - y 
         loss += 0.5 * l**2
         zu = (z * u).reshape(-1)
         zv = (z * v).reshape(-1)

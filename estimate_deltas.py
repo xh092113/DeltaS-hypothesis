@@ -28,6 +28,7 @@ def adam(task_prefix, init_x, zs, ys, delta=1e-2, learning_rate=0.1, \
     l_trajectory = []
     l_clean = []
     s_trajectory = []
+    g_trajectory = []
 
     for current_iter in range(num_iterations):
         if current_iter % 100000 == 0:
@@ -49,10 +50,6 @@ def adam(task_prefix, init_x, zs, ys, delta=1e-2, learning_rate=0.1, \
         u = m_hat / (torch.pow(v_hat, exponent) + epsilon)
         s = torch.pow(v_hat, -exponent) ## preconditioner
 
-        with torch.no_grad():
-            x -= learning_rate * u
-        x.grad.zero_()
-
         ## in the first iterates, s will change dramatically, since v moves from 
         ## 0 to a non-zero value, which will cause s to be very large
         ## So we record s from iteration D-1 instead of 0
@@ -61,8 +58,13 @@ def adam(task_prefix, init_x, zs, ys, delta=1e-2, learning_rate=0.1, \
             l_trajectory.append(loss.item())
             l_clean.append(loss_function(x, zs, ys).item())
             s_trajectory.append(s.detach().clone())
+            g_trajectory.append(g.detach().clone())
 
-    return x_trajectory, l_trajectory, l_clean, s_trajectory
+        with torch.no_grad():
+            x -= learning_rate * u
+        x.grad.zero_()
+
+    return x_trajectory, l_trajectory, l_clean, s_trajectory, g_trajectory
 
 def find_convergence_point(losses):
     length = len(losses)
@@ -83,7 +85,7 @@ def estimate_deltas(task_prefix, n, init_x, w_star, zs, ys, train_N, delta, lra,
     ys_test = ys[train_N:]
     zs = zs[:n]
     ys = ys[:n]
-    xs, train_losses_noised, train_losses_clean, s_trajectory = adam(task_prefix, init_x, zs, ys, delta=delta, \
+    xs, train_losses_noised, train_losses_clean, s_trajectory, g_trajectory = adam(task_prefix, init_x, zs, ys, delta=delta, \
                         learning_rate=lra, beta1=beta1, beta2=beta2, epsilon=epsilon, \
                         num_iterations=num_iterations, exponent=e, D=D)
     print_indexes = range(0, num_iterations, D)
@@ -91,24 +93,31 @@ def estimate_deltas(task_prefix, n, init_x, w_star, zs, ys, train_N, delta, lra,
     # convergence_point = find_convergence_point(train_losses_clean)
     deltas = []
     s_array = np.array(s_trajectory)
+    g_array = np.array(g_trajectory)
     ref_vector = s_array[convergence_point]
-    clipped = s_array[convergence_point+1:]
+    s_clipped = s_array[convergence_point+1:]
+    g_clipped = g_array[convergence_point+1:]
 
     ## delete this
-    # print("first items of s trajectory:")
+    # print("first items of gs trajectory:")
     # for i in range(100):
-    #     print(f"s_trajectory[{i}]", s_trajectory[i])
+    #     print(f"gs_trajectory[{i}]", _gs_trajectory[i])
 
     # print("first items of clipped s trajectory:")
-    # for i in range(100):
-    #     print(f"clipped[{i}]", clipped[i])
+    # for i in range(convergence_point, convergence_point + 100):
+    #     print(f"gs clipped[{i}]", _gs_trajectory[i])
 
     # raise ValueError("stop here")
     # return
     
-    deltas = np.linalg.norm(clipped - ref_vector, axis=1)
+    deltas = np.linalg.norm(s_clipped - ref_vector, axis=1)
+    # print((s_clipped - ref_vector).shape)
+    # print(g_clipped.shape)
+    gdeltas = ((s_clipped - ref_vector) * g_clipped).sum(axis=1).reshape(-1)
+
     np.save(f'results/{task_prefix}/deltas.npy', deltas)
     np.save(f'results/{task_prefix}/s_array.npy', s_array)
+    np.save(f'results/{task_prefix}/gdeltas.npy', gdeltas)
     
     ## two subplots: one for loss, one for delta
     plt.figure(figsize=(20, 20))
@@ -139,6 +148,14 @@ def estimate_deltas(task_prefix, n, init_x, w_star, zs, ys, train_N, delta, lra,
     plt.xlabel('Proj Dim 1')
     plt.ylabel('Proj Dim 2')
     plt.title('2D Random Projection of Trajectory')
+    plt.legend()
+
+    ## fourth plot: gdeltas
+    plt.subplot(2, 2, 4)
+    plt.plot(range(convergence_point + 1, len(s_trajectory)), gdeltas, label='gs', color='green')
+    plt.xlabel('Iteration')
+    plt.ylabel('gs')
+    plt.title('gs Trajectory of Adam with exponent={}'.format(e))
     plt.legend()
 
     plt.savefig(f'results/{task_prefix}/delta.png')
@@ -173,7 +190,7 @@ def main(args):
     init_x = torch.cat((init_x, init_x), 0)
     init_x = init_x * 0.1 
 
-    for scheme in [1.0, 1.5, 3.0, 0.5, 0.75, 1.25, 1.75, 2.5, 3.5]:
+    for scheme in [2.0, 1.0, 1.5, 3.0, 0.5, 0.75, 1.25, 1.75, 2.5, 3.5]:
         C = 0.1 ** (1 - scheme) ## let beta2 = 0.9 when lr = 0.1
         for lra in np.logspace(-3, -1, num=10):
             beta2 = 1 - C * lra ** scheme
