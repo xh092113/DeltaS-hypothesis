@@ -78,7 +78,7 @@ def find_convergence_point(losses):
     return length
 
 def estimate_deltas(task_prefix, n, init_x, w_star, zs, ys, train_N, delta, lra, beta1, beta2, epsilon, e, D, proj_matrix):
-    num_iterations = 200000 ## originally 10^7
+    num_iterations = 1000000 ## originally 10^7
     zs_test = zs[train_N:]
     ys_test = ys[train_N:]
     zs = zs[:n]
@@ -117,14 +117,12 @@ def estimate_deltas(task_prefix, n, init_x, w_star, zs, ys, train_N, delta, lra,
     plt.legend()
 
     ## third plot: s_trajectory
+    ## we plot the trajectory before converging as gray, and after converging as red
     plt.subplot(2, 2, 3)
     s_projected = s_array @ proj_matrix
-    print("s_projected:")
-    # for i in range(100):
-    #     print(s_projected[i])
-    #     print(s_array[i])
-    plt.plot(s_projected[:, 0], s_projected[:, 1], marker='o', markersize=1, linewidth=1)
-    plt.scatter(s_projected[convergence_point, 0], s_projected[convergence_point, 1], color='red', label='Convergence Point')
+    plt.plot(s_projected[:convergence_point, 0], s_projected[:convergence_point, 1], marker='o', markersize=1, linewidth=1, color='gray')
+    plt.plot(s_projected[convergence_point:, 0], s_projected[convergence_point:, 1], marker='o', markersize=1, linewidth=1, color='red')
+    plt.scatter(s_projected[convergence_point, 0], s_projected[convergence_point, 1], color='orange', label='Convergence Point')
     plt.xlabel('Proj Dim 1')
     plt.ylabel('Proj Dim 2')
     plt.title('2D Random Projection of Trajectory')
