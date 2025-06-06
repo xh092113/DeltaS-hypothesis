@@ -1,0 +1,1 @@
+This repository aims to track the dynamics of $\bf{S}$ (preconditioner, defined in the calculation of the slow SDE for Adam), and thereby estimate $\Delta \bf{S}$, which may inspire the calculation in 1.5-scheme.
